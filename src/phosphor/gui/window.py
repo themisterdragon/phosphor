@@ -19,9 +19,8 @@ from ..core import (NAME, OFFLINE_CHOICES, SORTS, THEME_NAMES, FeedStore, Librar
                     load_config, location_from, merge_stories, open_url, place_label, probe_feed, read_opml,
                     save_config, short_err)
 from .eras import BY_KEY, ERAS, MAC, colors_for, system_dark
-from .looks import LOOKS, stamp_saved, unit_letter
-
 if tk:
+    from .looks import LOOKS, stamp_saved, unit_letter
     from .page import Page, ask, choose, confirm, message, resolve_family
 
 MOD = "Command" if MAC else "Control"
@@ -1279,7 +1278,8 @@ def main():
     ap.add_argument("--self-test", metavar="REPORT", help=argparse.SUPPRESS)
     args = ap.parse_args()
     if tk is None:
-        sys.exit("phosphor-gui needs Tk. On Arch: sudo pacman -S tk   On Debian/Ubuntu: sudo apt install python3-tk")
+        sys.exit("phosphor-gui needs Tk. On Arch: sudo pacman -S tk   On Debian/Ubuntu: sudo apt install python3-tk\n"
+                 "On a Mac or Windows, the Python from python.org includes it (or use the Phosphor app download).")
     if sys.platform == "win32":
         try:  # crisp text on high-DPI screens
             import ctypes
