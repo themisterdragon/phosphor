@@ -1,0 +1,166 @@
+# Builds Phosphor for Windows, macOS (Apple silicon and Intel) and Linux, tests each build on
+# its own system, and (for a v* tag) attaches them to a draft GitHub release to look over and publish.
+# "Run workflow" on the Actions tab does the builds and tests without making a release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        id: v
+        run: |
+          v=$(python3 -c "import sys; sys.path.insert(0, 'src'); import phosphor; print(phosphor.__version__)")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "v$v" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} doesn't match __version__ $v"; exit 1
+          fi
+      - run: python3 scripts/check_py38.py
+      - run: python3 scripts/check_contrast.py
+
+  linux:
+    needs: checks
+    runs-on: ubuntu-latest
+    env:
+      V: ${{ needs.checks.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+      - run: python3 scripts/build_pyz.py
+      - name: Test Phosphor Terminal
+        run: |
+          python3 dist/phosphor.pyz --version
+          python3 dist/phosphor.pyz --self-test
+          python3 scripts/smoke_terminal.py python3 dist/phosphor.pyz
+      - name: Test Phosphor (window)
+        run: |
+          xvfb-run -a python3 dist/phosphor-gui.pyz --self-test report.txt || { cat report.txt; exit 1; }
+          cat report.txt
+      - name: Test the installer
+        run: |
+          PREFIX="$RUNNER_TEMP/inst" sh dist/install.sh
+          "$RUNNER_TEMP/inst/bin/phosphor" --version
+          "$RUNNER_TEMP/inst/bin/phosphor-gui" --version
+      - name: Package
+        run: |
+          mkdir -p "pkg/Phosphor-$V"
+          cp dist/phosphor.pyz dist/phosphor-gui.pyz dist/install.sh README.md LICENSE "pkg/Phosphor-$V/"
+          tar -czf "Phosphor-$V-linux.tar.gz" -C pkg "Phosphor-$V"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: Phosphor-*-linux.tar.gz
+
+  windows:
+    needs: checks
+    runs-on: windows-latest
+    env:
+      V: ${{ needs.checks.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pyinstaller pillow windows-curses
+      - run: python scripts/make_icon.py build/icon.png
+      - name: Build
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --name Phosphor --paths src --hidden-import phosphor.app --icon build/icon.png scripts/entry_window.py
+          pyinstaller --noconfirm --onefile --console --name Phosphor-Terminal --paths src --icon build/icon.png scripts/entry_terminal.py
+      - name: Test Phosphor Terminal
+        run: |
+          dist\Phosphor-Terminal.exe --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          dist\Phosphor-Terminal.exe --self-test
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Test Phosphor (window)
+        run: |
+          $p = Start-Process -FilePath dist\Phosphor.exe -ArgumentList "--self-test", "$PWD\report.txt" -Wait -PassThru
+          if (Test-Path report.txt) { Get-Content report.txt }
+          if ($p.ExitCode -ne 0) { Write-Error "window self-test failed ($($p.ExitCode))"; exit 1 }
+      - name: Rename
+        run: |
+          Move-Item dist\Phosphor.exe "Phosphor-$env:V-windows.exe"
+          Move-Item dist\Phosphor-Terminal.exe "Phosphor-Terminal-$env:V-windows.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: "*-windows.exe"
+
+  macos:
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: apple-silicon
+          - runner: macos-15-intel
+            arch: intel
+    runs-on: ${{ matrix.runner }}
+    env:
+      V: ${{ needs.checks.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pyinstaller pillow
+      - run: python scripts/make_icon.py build/icon.png
+      - name: Build
+        run: |
+          pyinstaller --noconfirm --windowed --name Phosphor --osx-bundle-identifier io.github.themisterdragon.phosphor \
+            --paths src --hidden-import phosphor.app --icon build/icon.png scripts/entry_window.py
+          pyinstaller --noconfirm --onefile --name phosphor-terminal --paths src scripts/entry_terminal.py
+          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $V" dist/Phosphor.app/Contents/Info.plist 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $V" dist/Phosphor.app/Contents/Info.plist
+      - name: Test Phosphor Terminal
+        run: |
+          dist/phosphor-terminal --version
+          dist/phosphor-terminal --self-test
+          python scripts/smoke_terminal.py dist/phosphor-terminal
+      - name: Test Phosphor (window)
+        run: |
+          dist/Phosphor.app/Contents/MacOS/Phosphor --self-test "$PWD/report.txt" || { cat report.txt; exit 1; }
+          cat report.txt
+      - name: Disk image
+        run: |
+          mkdir dmg
+          cp -R dist/Phosphor.app dmg/
+          cp dist/phosphor-terminal "dmg/Phosphor Terminal"
+          cp README.md LICENSE dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "Phosphor $V" -srcfolder dmg -ov -format UDZO "Phosphor-$V-macos-${{ matrix.arch }}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: Phosphor-*.dmg
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [checks, linux, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l out
+          gh release create "$GITHUB_REF_NAME" out/* --draft --title "Phosphor ${{ needs.checks.outputs.version }}" \
+            --notes-file .github/release-notes.md

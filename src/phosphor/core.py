@@ -693,14 +693,14 @@ class Library:
 
     RETRY = 6 * 3600   # seconds before trying again to save the full text of a story that failed
 
-    def __init__(self, path=LIBRARY_PATH):
-        self.path = path
+    def __init__(self, path=None):
+        self.path = path or LIBRARY_PATH
         self.lock = threading.RLock()
         self.items = {}      # link -> stored story
         self.weather = None
         self.dirty = False
         try:
-            with open(path) as f:
+            with open(self.path) as f:
                 data = json.load(f)
             self.items = data.get("stories") or {}
             self.weather = data.get("weather")

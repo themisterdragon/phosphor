@@ -95,9 +95,10 @@ class Gui:
         self.root.after(80, self.pump)
         self.root.after(1000, self.tick)
         self.apply_era()
-        self.load_feeds()
-        if self.cfg.get("location"):
-            self.load_weather()
+        if not getattr(args, "offline", False):  # (the self-test brings its own stories and weather)
+            self.load_feeds()
+            if self.cfg.get("location"):
+                self.load_weather()
         if not self.cfg.get("gui_seen"):
             self.cfg["gui_seen"] = True
             self.save()
@@ -1275,6 +1276,7 @@ def main():
     ap.add_argument("--no-boot", action="store_true", help="skip the terminal view's boot sequence")
     ap.add_argument("--era", choices=[e.key for e in ERAS], help="start in this era")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    ap.add_argument("--self-test", metavar="REPORT", help=argparse.SUPPRESS)
     args = ap.parse_args()
     if tk is None:
         sys.exit("phosphor-gui needs Tk. On Arch: sudo pacman -S tk   On Debian/Ubuntu: sudo apt install python3-tk")
@@ -1284,6 +1286,10 @@ def main():
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except (AttributeError, OSError):
             pass
+    if args.self_test:
+        from ..selftest import window_main
+        window_main(args.self_test)
+        return
     if args.era:
         cfg = load_config()
         cfg["gui_era"] = args.era

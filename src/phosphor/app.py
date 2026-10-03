@@ -1005,7 +1005,12 @@ def main():
     ap = argparse.ArgumentParser(prog="phosphor", description="Phosphor Terminal -- retro weather & RSS")
     ap.add_argument("--no-boot", action="store_true", help="skip the boot sequence")
     ap.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
+    ap.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.self_test:
+        from .selftest import terminal_main
+        terminal_main()
+        return
     os.environ.setdefault("ESCDELAY", "25")
     try:
         curses.wrapper(lambda s: App(s, args).run())
